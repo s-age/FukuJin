@@ -1,0 +1,1 @@
+typealias ReorderPinnedWindowsUseCaseProtocol = any SyncUseCase<ReorderPinnedWindowsRequest, PinnedWindowListResponse>

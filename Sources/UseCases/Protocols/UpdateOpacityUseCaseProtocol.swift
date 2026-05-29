@@ -1,0 +1,1 @@
+typealias UpdateOpacityUseCaseProtocol = any SyncUseCase<UpdateOpacityRequest, PinnedWindowListResponse>

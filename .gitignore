@@ -1,0 +1,14 @@
+.DS_Store
+.build/
+.swiftpm/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+FukuJin.app/
+
+# Internal working files — excluded from the public repo
+.claude/
+knowledge/
+plans/
+pipelines/
+CLAUDE.md

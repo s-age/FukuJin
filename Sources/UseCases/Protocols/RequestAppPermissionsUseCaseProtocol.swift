@@ -1,0 +1,1 @@
+typealias RequestAppPermissionsUseCaseProtocol = any AsyncUseCase<RequestAppPermissionsRequest, Void>

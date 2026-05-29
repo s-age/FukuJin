@@ -1,0 +1,1 @@
+typealias CaptureWindowOneShotUseCaseProtocol = any AsyncUseCase<CaptureWindowOneShotRequest, CapturedImageRefResponse>
