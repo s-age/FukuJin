@@ -63,32 +63,49 @@ codesign --force --sign "${SIGN_IDENTITY}" \
 codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
 info "Code signature verified."
 
-# --- Assemble the DMG -------------------------------------------------------
-info "Creating ${DMG_NAME}..."
-DMG_STAGE="$(mktemp -d)"
-trap 'rm -rf "${DMG_STAGE}"' EXIT
-cp -R "${APP_BUNDLE}" "${DMG_STAGE}/"
-ln -s /Applications "${DMG_STAGE}/Applications"
-rm -f "${DMG_NAME}"
-hdiutil create \
-    -volname "${PRODUCT}" \
-    -srcfolder "${DMG_STAGE}" \
-    -fs HFS+ \
-    -format UDZO \
-    "${DMG_NAME}"
+make_dmg() {
+    local stage
+    stage="$(mktemp -d)"
+    cp -R "${APP_BUNDLE}" "${stage}/"
+    ln -s /Applications "${stage}/Applications"
+    rm -f "${DMG_NAME}"
+    hdiutil create \
+        -volname "${PRODUCT}" \
+        -srcfolder "${stage}" \
+        -fs HFS+ \
+        -format UDZO \
+        "${DMG_NAME}" >/dev/null
+    rm -rf "${stage}"
+}
 
-# --- Notarize + staple ------------------------------------------------------
+notarize_dmg() {
+    xcrun notarytool submit "${DMG_NAME}" --keychain-profile "${NOTARY_PROFILE}" --wait
+}
+
+# --- Assemble + notarize + staple -------------------------------------------
+# Two notarization passes so that BOTH the DMG and the .app inside it carry a
+# stapled ticket (the app's ticket only becomes fetchable after the first pass,
+# and stapling the app changes the DMG's hash, so the rebuilt DMG must be
+# notarized again). This lets the extracted app pass Gatekeeper even offline.
 if [[ "${SKIP_NOTARIZE}" == "true" ]]; then
     warn "SKIP_NOTARIZE=true — skipping notarization. DMG will trip Gatekeeper."
+    info "Creating ${DMG_NAME}..."
+    make_dmg
 else
-    info "Submitting ${DMG_NAME} for notarization (profile: ${NOTARY_PROFILE})..."
-    xcrun notarytool submit "${DMG_NAME}" \
-        --keychain-profile "${NOTARY_PROFILE}" \
-        --wait
-    info "Stapling notarization ticket..."
+    info "Creating ${DMG_NAME} (pass 1/2)..."
+    make_dmg
+    info "Notarizing to register the app ticket (pass 1/2)..."
+    notarize_dmg
+    info "Stapling the .app..."
+    xcrun stapler staple "${APP_BUNDLE}"
+    info "Rebuilding ${DMG_NAME} with the stapled app (pass 2/2)..."
+    make_dmg
+    info "Notarizing the final DMG (pass 2/2)..."
+    notarize_dmg
+    info "Stapling the DMG..."
     xcrun stapler staple "${DMG_NAME}"
     xcrun stapler validate "${DMG_NAME}"
-    spctl --assess --type open --context context:primary-signature --verbose=2 "${DMG_NAME}" || true
+    spctl -a -vvv -t exec "${APP_BUNDLE}" || true
 fi
 
 # --- Report -----------------------------------------------------------------

@@ -5,6 +5,8 @@
 xcuserdata/
 DerivedData/
 FukuJin.app/
+*.dmg
+release.log
 
 # Internal working files — excluded from the public repo
 .claude/
