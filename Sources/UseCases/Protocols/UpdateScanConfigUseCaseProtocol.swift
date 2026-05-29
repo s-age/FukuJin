@@ -1,0 +1,1 @@
+typealias UpdateScanConfigUseCaseProtocol = any SyncUseCase<UpdateScanConfigRequest, PinnedWindowListResponse>

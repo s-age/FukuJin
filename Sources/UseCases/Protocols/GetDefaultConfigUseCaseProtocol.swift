@@ -1,0 +1,1 @@
+typealias GetDefaultConfigUseCaseProtocol = any SyncUseCase<GetDefaultConfigRequest, OverlayConfigResponse>

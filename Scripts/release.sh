@@ -1,0 +1,105 @@
+#!/bin/bash
+set -euo pipefail
+
+# Build a Developer ID-signed, notarized, stapled DMG of FukuJin.app, ready to
+# attach to a GitHub release and reference from a Homebrew Cask.
+#
+# Prerequisites (one-time):
+#   1. A "Developer ID Application" certificate in your login keychain.
+#   2. A notarytool keychain profile. Create it once with:
+#        xcrun notarytool store-credentials "$NOTARY_PROFILE" \
+#          --apple-id "<your-apple-id>" \
+#          --team-id  "<your-team-id>" \
+#          --password "<app-specific-password>"
+#      (App-specific password: https://account.apple.com → Sign-In and Security)
+#
+# Environment overrides:
+#   SIGN_IDENTITY   Code-signing identity (default: auto-detected Developer ID Application)
+#   NOTARY_PROFILE  notarytool keychain profile name (default: fukujin-notary)
+#   SKIP_NOTARIZE   "true" to build+sign+DMG but skip notarization (local smoke test)
+
+PRODUCT="FukuJin"
+APP_BUNDLE="${PRODUCT}.app"
+ENTITLEMENTS="Resources/FukuJin.entitlements"
+NOTARY_PROFILE="${NOTARY_PROFILE:-fukujin-notary}"
+SKIP_NOTARIZE="${SKIP_NOTARIZE:-false}"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; NC='\033[0m'
+info()  { printf "${GREEN}[INFO]${NC} %s\n" "$1"; }
+warn()  { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
+error() { printf "${RED}[ERROR]${NC} %s\n" "$1" >&2; }
+
+cd "${PROJECT_DIR}"
+
+# --- Resolve signing identity ----------------------------------------------
+if [[ -z "${SIGN_IDENTITY:-}" ]]; then
+    SIGN_IDENTITY=$(security find-identity -v -p codesigning \
+        | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+fi
+if [[ -z "${SIGN_IDENTITY}" ]]; then
+    error "No 'Developer ID Application' identity found. Set SIGN_IDENTITY or install the certificate."
+    exit 1
+fi
+info "Signing identity: ${SIGN_IDENTITY}"
+
+# --- Version from Info.plist -----------------------------------------------
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
+DMG_NAME="${PRODUCT}-${VERSION}.dmg"
+info "Building ${PRODUCT} ${VERSION}"
+
+# --- Build the unsigned bundle, then sign with Developer ID -----------------
+info "Building release bundle (unsigned)..."
+"${SCRIPT_DIR}/build.sh" --clean --no-sign
+
+info "Signing ${APP_BUNDLE} with Developer ID + hardened runtime..."
+codesign --force --sign "${SIGN_IDENTITY}" \
+    --entitlements "${ENTITLEMENTS}" \
+    --options runtime \
+    --timestamp \
+    "${APP_BUNDLE}"
+codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
+info "Code signature verified."
+
+# --- Assemble the DMG -------------------------------------------------------
+info "Creating ${DMG_NAME}..."
+DMG_STAGE="$(mktemp -d)"
+trap 'rm -rf "${DMG_STAGE}"' EXIT
+cp -R "${APP_BUNDLE}" "${DMG_STAGE}/"
+ln -s /Applications "${DMG_STAGE}/Applications"
+rm -f "${DMG_NAME}"
+hdiutil create \
+    -volname "${PRODUCT}" \
+    -srcfolder "${DMG_STAGE}" \
+    -fs HFS+ \
+    -format UDZO \
+    "${DMG_NAME}"
+
+# --- Notarize + staple ------------------------------------------------------
+if [[ "${SKIP_NOTARIZE}" == "true" ]]; then
+    warn "SKIP_NOTARIZE=true — skipping notarization. DMG will trip Gatekeeper."
+else
+    info "Submitting ${DMG_NAME} for notarization (profile: ${NOTARY_PROFILE})..."
+    xcrun notarytool submit "${DMG_NAME}" \
+        --keychain-profile "${NOTARY_PROFILE}" \
+        --wait
+    info "Stapling notarization ticket..."
+    xcrun stapler staple "${DMG_NAME}"
+    xcrun stapler validate "${DMG_NAME}"
+    spctl --assess --type open --context context:primary-signature --verbose=2 "${DMG_NAME}" || true
+fi
+
+# --- Report -----------------------------------------------------------------
+SHA256=$(shasum -a 256 "${DMG_NAME}" | awk '{print $1}')
+info "Done."
+echo
+echo "  Artifact : ${PROJECT_DIR}/${DMG_NAME}"
+echo "  Version  : ${VERSION}"
+echo "  sha256   : ${SHA256}"
+echo
+echo "Next steps:"
+echo "  1. Create a GitHub release tagged v${VERSION} and upload ${DMG_NAME}."
+echo "  2. Update packaging/homebrew/fukujin.rb: version \"${VERSION}\", sha256 \"${SHA256}\"."
+echo "  3. Copy it into the s-age/homebrew-fukujin repo at Casks/fukujin.rb."

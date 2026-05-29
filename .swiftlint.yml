@@ -1,0 +1,163 @@
+included:
+  - Sources
+
+excluded:
+  - Sources/DI         # DI containers wire all layers; intentional high coupling
+  - Sources/CGSPrivate # C module shim — not Swift
+
+# ── Phased rule introduction ──────────────────────────────────────────────────
+# Default rules stay disabled via `only_rules`; each phase opts in incrementally.
+#   Phase 1 — layer-import enforcement (custom_rules)
+#   Phase 2 — opt-in basic style rules
+#   Phase 3 — length / complexity rules (planned)
+only_rules:
+  - custom_rules
+  # Phase 2: basic style
+  - empty_count
+  - first_where
+  - explicit_init
+  - closure_end_indentation
+  # Phase 3: size / complexity
+  - file_length
+  - type_body_length
+  - function_body_length
+  - function_parameter_count
+  - cyclomatic_complexity
+  - nesting
+  - line_length
+
+# ── Phase 3 thresholds (mirrors ../10slide/.swiftlint.yml — perclst-derived) ───
+file_length:
+  warning: 300
+  error: 300
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 200
+  error: 200
+
+function_body_length:
+  warning: 50
+  error: 50
+
+function_parameter_count:
+  warning: 4
+  error: 4
+  ignores_default_parameters: true
+
+cyclomatic_complexity:
+  warning: 10
+  error: 10
+  ignores_case_statements: true
+
+nesting:
+  type_level:
+    warning: 2
+    error: 2
+  function_level:
+    warning: 3
+    error: 3
+
+line_length:
+  warning: 120
+  error: 120
+  ignores_comments: true
+  ignores_urls: true
+
+# ── Layer dependency enforcement ──────────────────────────────────────────────
+# Architecture: Presentation → UseCases → Domain → Repositories → Infrastructure
+# (Errors is a shared leaf accessible from any layer.)
+#
+# fuku-jin uses these OS-level Infrastructure frameworks (banned in upper
+# layers): ScreenCaptureKit, ServiceManagement, UserNotifications, Vision,
+# CGSPrivate, CoreMedia, IOKit, ApplicationServices.
+# UI frameworks (banned in Domain/UseCases/Repositories): SwiftUI, UIKit,
+# AppKit, QuartzCore.
+custom_rules:
+  domain_no_infrastructure_imports:
+    included: "Sources/Domain/.*\\.swift"
+    name: "Domain No Infrastructure Imports"
+    regex: "^import (ScreenCaptureKit|ServiceManagement|UserNotifications|Vision|CGSPrivate|CoreMedia|IOKit|ApplicationServices)"
+    message: "Domain layer must not import infrastructure frameworks. Use Repository protocols instead."
+    severity: error
+
+  domain_no_ui_imports:
+    included: "Sources/Domain/.*\\.swift"
+    name: "Domain No UI Imports"
+    regex: "^import (SwiftUI|UIKit|AppKit|QuartzCore)"
+    message: "Domain layer must not import UI frameworks."
+    severity: error
+
+  usecase_no_ui_imports:
+    included: "Sources/UseCases/.*\\.swift"
+    name: "UseCase No UI Imports"
+    regex: "^import (SwiftUI|UIKit|AppKit|QuartzCore)"
+    message: "UseCase layer must not import UI frameworks."
+    severity: error
+
+  usecase_no_infrastructure_imports:
+    included: "Sources/UseCases/.*\\.swift"
+    name: "UseCase No Infrastructure Imports"
+    regex: "^import (ScreenCaptureKit|ServiceManagement|UserNotifications|Vision|CGSPrivate|CoreMedia|IOKit|ApplicationServices)"
+    message: "UseCase layer must not import infrastructure frameworks. Use Repository protocols instead."
+    severity: error
+
+  repositories_no_ui_imports:
+    included: "Sources/Repositories/.*\\.swift"
+    name: "Repository No UI Imports"
+    regex: "^import (SwiftUI|UIKit|AppKit|QuartzCore)"
+    message: "Repository layer must not import UI frameworks."
+    severity: error
+
+  repositories_no_infrastructure_imports:
+    included: "Sources/Repositories/.*\\.swift"
+    name: "Repository No Infrastructure Imports"
+    regex: "^import (ScreenCaptureKit|ServiceManagement|UserNotifications|Vision|CGSPrivate|CoreMedia|IOKit|ApplicationServices)"
+    message: "Repository layer must not import OS infrastructure frameworks directly. Depend on Infrastructure/Protocols (DataSource/Store protocols) instead."
+    severity: error
+
+  errors_only_foundation:
+    included: "Sources/Errors/.*\\.swift"
+    name: "Errors layer imports only Foundation"
+    regex: "^import (?!Foundation([\\. ]|$)).*"
+    message: "Errors is a leaf-node layer; may import Foundation only."
+    severity: error
+
+  # ── Cross-layer type references (single-module blindspot mitigation) ───────
+  # Single SPM module: layer-crossing type references emit no `import`, so the
+  # `^import` rules above can't catch them. Guard the known Infra protocol names
+  # by literal type name within Presentation.
+  presentation_no_infrastructure_types:
+    included: "Sources/Presentation/.*\\.swift"
+    name: "Presentation must not reference Infrastructure types"
+    regex: "\\b(CapturedImageStoreProtocol|CaptureDataSourceProtocol|WindowDataSourceProtocol|AccessibilityDataSourceProtocol|WindowZOrderDataSourceProtocol|TextRecognitionDataSourceProtocol|NotificationDataSourceProtocol|WorkspaceDataSourceProtocol|CommandDataSourceProtocol|SettingsDataSourceProtocol|LoginItemDataSourceProtocol)\\b"
+    message: "Presentation must not reference Infrastructure protocols/types. Route capabilities through UseCases or inject a closure via DI."
+    severity: error
+
+  # ── Safety escape hatches ──────────────────────────────────────────────────
+  # Forbid mechanisms that bypass Swift's type / concurrency safety.
+  # All resolved at zero usage as of introduction; rules guard against regression.
+  no_unchecked_sendable:
+    name: "No @unchecked Sendable"
+    regex: "@unchecked\\s+Sendable"
+    message: "@unchecked Sendable bypasses concurrency safety. Use Mutex for shared state, restructure ownership, or rely on @preconcurrency import to silence framework-side warnings."
+    severity: error
+
+  no_unsafe_concurrency_or_pointer:
+    name: "No nonisolated(unsafe) / Unsafe*Pointer / unsafeBitCast"
+    regex: "(nonisolated\\(unsafe\\)|Unsafe[A-Za-z]*Pointer|unsafeBitCast)"
+    message: "Avoid Swift safety escape hatches. Use Mutex for cross-actor state and safe alternatives for memory access."
+    severity: error
+
+  no_anyview:
+    included: "Sources/Presentation/.*\\.swift"
+    name: "No AnyView"
+    regex: "\\bAnyView\\b"
+    message: "AnyView erases type info and defeats SwiftUI's diffing. Use @ViewBuilder, generic Content, or restructure the view hierarchy."
+    severity: error
+
+  no_osallocatedunfairlock:
+    name: "No OSAllocatedUnfairLock"
+    regex: "\\bOSAllocatedUnfairLock\\b"
+    message: "Use Mutex (from Synchronization) for thread-safe mutable state. OSAllocatedUnfairLock is deprecated in this codebase; see CLAUDE.md."
+    severity: error

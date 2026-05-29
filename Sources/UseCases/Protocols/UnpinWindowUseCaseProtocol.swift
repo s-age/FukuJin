@@ -1,0 +1,1 @@
+typealias UnpinWindowUseCaseProtocol = any SyncUseCase<UnpinWindowRequest, PinnedWindowListResponse>

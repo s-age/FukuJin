@@ -1,0 +1,1 @@
+typealias ActivatePinnedWindowUseCaseProtocol = any SyncUseCase<ActivatePinnedWindowRequest, OverlayPlanResponse>
